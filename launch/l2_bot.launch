@@ -17,9 +17,7 @@
     <arg name="show_image_view" default="true" />
     <arg name="show_dynamic_reconfigure" default="true" />
   </include>
-
    <!-- Launch line following node -->
    #  <node pkg="l2_bot" type="line_follow.py" name="line_follow_node" output="screen" />
-
-
+   
 </launch>

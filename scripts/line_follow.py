@@ -10,12 +10,13 @@ import numpy as np
 # Import ROS message information
 from geometry_msgs.msg import Twist
 from geometry_msgs.msg import Pose
+from std_msgs.msg import Float64
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 
 # Import dynamic reconfigure 
 from dynamic_reconfigure.server import Server
-from hw08_crist.cfg import LineFollowDynCfgConfig
+from l2_bot.cfg import LineFollowDynCfgConfig
 
 
 ACTIVE_WINDOWS = []
@@ -31,6 +32,7 @@ class LineFollowNode():
         self.enable = 0
         self.gain = 0.0
         self.steer = 0.0
+        
         self.speed_desired = 0.0 # @1m/s, GAIN = 3.5
         self.frame_skip = 1
         self.hue_low = 0
@@ -39,7 +41,15 @@ class LineFollowNode():
         self.sat_high = 0
         self.val_low = 0
         self.val_high = 0
-        self.blur = 0
+        self.mask_top = 1
+        self.mask_right = 1
+        self.targ_line= 1
+        self.test_length = 0
+        self.test_time = 0
+        self.track_width = 0
+        self.wheel_radius = 0
+        self.maxRPM = 0
+        self.rpm2analog = 1
 
         # Initialize frame counter
         self.frame_count = 1
@@ -47,14 +57,21 @@ class LineFollowNode():
         # Initialize robot motion
         self.steer = 0.0
 
+        '''# Open webcam
+        self.br = CvBridge()
+        self.vid = None
+        self.ret = False
+        self.pub_image = rospy.Publisher('webcam/image', Image, queue_size=1)'''
         # Define the image subscriber
         self.image_view = rospy.Subscriber('camera/image_raw', Image,
                                           self.camera_callback, queue_size=1)
         
-        # Define publisher
+        # Define cmd publisher
         self.pub_twist = rospy.Publisher('cmd_vel',
                                          Twist, queue_size=1)
-                                         
+        # Define communication publisher
+        self.pub_arduino = rospy.Publisher('comms/arduino', Float64, queue_size=1)
+                                                                        
         # Set up dynamics reconfigure
         self.srv = Server(LineFollowDynCfgConfig,
                           self.dyn_reconfig_callback)
@@ -64,13 +81,20 @@ class LineFollowNode():
 
         # Loop and publish commands to vehicle
         while not rospy.is_shutdown():
-
+            '''self.vid = cv.VideoCapture(4)
+            self.ret, self.frame = self.vid.read()
+            self.frame = cv.cvtColor(self.frame, cv.COLOR_BGR2RGB)'''
             # Build message yaw and speed rate message and publish
             if self.enable:
                 twist_msg.linear.x = self.speed_desired
                 twist_msg.angular.z = self.steer
             else:
                 twist_msg = Twist()
+            self.maxRPM = (((self.test_length/(2*np.pi*self.wheel_radius))/self.test_time)*60)
+            self.rpm2analog = 255/self.maxRPM
+            '''if self.vid is not None:
+                self.pub_image.publish(self.br.cv2_to_imgmsg(self.frame))'''
+            self.pub_arduino.publish(self.rpm2analog)
             self.pub_twist.publish(twist_msg)
             
             # Sleep for time step
@@ -94,7 +118,14 @@ class LineFollowNode():
         self.sat_high = config['sat_high']
         self.val_low = config['val_low']
         self.val_high = config['val_high']
-        self.blur = config['blur']
+        self.mask_top = config['mask_top']
+        self.mask_right = config['mask_right']
+        self.targ_line = config['targ_line']
+        self.test_length = config['test_length']
+        self.test_time = config['test_time']
+        self.track_width = config['track_width']
+        self.wheel_radius = config['wheel_radius']
+        
         self.dyn_config = config
         
         return config
@@ -112,98 +143,76 @@ class LineFollowNode():
         
         # Get the camera image and make a copy
         img = CvBridge().imgmsg_to_cv2(rgb_msg, "bgr8" )
-        # print('Orig', img.shape)
+        
 
         # Convert image to a HSV image and blur
         img_hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV)
-        img_hsv = cv.medianBlur(img_hsv, self.blur)
+        img_blur = cv.medianBlur(img_hsv, 7)
         
         # Threshold HSV image to binary based on range
-        img_hsv_thres = cv.inRange(img_hsv,
+        img_hsv_thresh = cv.inRange(img_blur,
                                    (self.hue_low, 0, 0),
                                    (self.hue_high, 255, 255))
-                                   
-        rows, cols = img_hsv_thres.shape
-        # print('Thres Shape = ', img_hsv_thres.shape)
-        self.display_image('HSV Image Threshold', img_hsv_thres, True)
+        thresh_copy = img_hsv_thresh
+        self.display_image('HSV Image Threshold', thresh_copy, True)
+        img_masked = img_hsv_thresh                        
+        rows, cols = img_masked.shape[:2]
+        start_point_top = (0,0)
+        end_point_top = (cols,int(rows/self.mask_top))
+        start_point_right = (int(cols/self.mask_right),0)
+        end_point_right = (cols,rows)
+        color = (0,0,0)
+        mask_top = cv.rectangle(img_masked, start_point_top, end_point_top, color, -1)
+        mask_right = cv.rectangle(img_masked, start_point_right, end_point_right, color, -1)
+        img_masked = cv.bitwise_and(img_masked,mask_top)
+        img_masked = cv.bitwise_and(img_masked,mask_right)
+
+        self.display_image('Masked Image', img_masked, True)
+        
 
         # Count total pixels and non-zero pixels
         total_pixels = rows*cols
-        targ_line = np.array([cols/5, rows/2])
-        point1, point2 = (int(cols/5), 0), (int(cols/5), rows)
+        targ_line = cols/self.targ_line
+        point1, point2 = (int(cols/self.targ_line), 0), (int(cols/self.targ_line), rows)
         cv.line(img, point1, point2, (0,200,255), 1)
-        nnz_pixels = cv.countNonZero(img_hsv_thres)
-        # rospy.loginfo('Total / NNZ: %5d / %5d' % (total_pixels, nnz_pixels))
-        # 3000 non-zero pixels is sufficient
+        nnz_pixels = cv.countNonZero(img_hsv_thresh)
         
-        
-        ##
         ## Check if no lines are observed and spin
         ## Set speed and return!
-        ##
-        #
+
         if nnz_pixels <= 3000:
             self.speed_desired = 0.0
         else:
             self.speed_desired = self.dyn_config['speed']
-        self.contours, self.hierarchy = cv.findContours(img_hsv_thres, cv.RETR_TREE,
+        self.contours, self.hierarchy = cv.findContours(img_hsv_thresh, cv.RETR_TREE,
                                                cv.CHAIN_APPROX_SIMPLE)
-        cv.drawContours(img, self.contours, -1, (255,255,0), 1)
+        cv.drawContours(img_masked, self.contours, -1, (0,0,255), 1)
         for i, contour in enumerate(self.contours):
             self.cnt = self.contours[i]
             M = cv.moments(self.cnt)
             CG_x = M['m10']/M['m00'] if M['m00'] > 0 else 0
             CG_y = M['m01']/M['m00'] if M['m00'] > 0 else 0
             CG = np.array([CG_x, CG_y])
-            cv.circle(img, (int(CG[0]), int(targ_line[1])), 7, (0, 0, 255), -1)
+            cv.circle(img, (int(CG[0]), int(CG[1])), 7, (0, 0, 255), -1)
             if CG_x < (int(cols/2)):
                 # Calculate error based on the center of the image and the gain
-                err = targ_line[0] - CG[0]
-                p_control = self.gain * err/targ_line[0] 
+                err = targ_line - CG[0]
+                p_control = self.gain * err/targ_line 
                 self.speed_desired = self.dyn_config['speed']
                 self.steer = p_control
             else:
                 pass
-                #self.speed_desired = 0.0
-                #self.steer = self.steer - 1
-        # Creating moment to find centroid of the white pixels
-        '''M = cv.moments(img_hsv_thres)
-        CG_x = M['m10']/M['m00'] if M['m00'] > 0 else 0
-        CG_y = M['m01']/M['m00'] if M['m00'] > 0 else 0
-        CG = np.array([CG_x, CG_y])
-        
-        if CG_y > (int(rows/3)):
-            # Calculate error based on the center of the image and the gain
-            err = targ_line[0] - CG[0]
-            p_control = self.gain * err/targ_line[0]
-        else:
-            p_control = p_control -1'''
-        # Display centroid image
-        
-        
-        
-        self.display_image('Centroid', img, True)
-
-        
-
-        ##############################
-        # Use for debugging purposes: 
-        ##############################
-        
-        # print('m00  ', M['m00'])
-        # print('m01  ', M['m01'])
-        # print('m10  ', M['m10'])
-        
-        # print('m10/m00  ', M['m10']/M['m00'])   # X Centroid
-        # print('m01/m00  ', M['m01']/M['m00'])   # Y Centroid
-        # print('Center = ', cols/2) 
-        # print('Error = ', err)
-        
-        ##############################
-                
+        self.display_image('Centroid', img, True)        
         return
     
-
+    ########################
+    # Arduino Comms Callback
+    ########################
+    def arduino_callback(self):
+        self.maxRPM = (((self.test_length/(2*np.pi*self.wheel_radius))/self.test_time)*60)
+        self.rpm2analog = 255/self.maxRPM
+        self.pub_arduino.publish(self.rpm2analog)
+        return
     ####################
     # Display an image
     ####################
@@ -223,7 +232,7 @@ class LineFollowNode():
                 cv.destroyWindow(title_str)
                 ACTIVE_WINDOWS.remove(title_str)
         return
-
+    
 
 
 #################    
