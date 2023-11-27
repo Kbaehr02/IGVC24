@@ -1,0 +1,25 @@
+<launch>
+
+  <!-- Load map -->
+  <param name="map_dir" value="$(find gazelle_sim_j129_l2_course)/map" />
+  <rosparam command="load"
+            file="$(find gazelle_sim_j129_l2_course)/map/j129_l2_course.yaml" />
+
+  <!-- Load robot -->
+  <rosparam command="load"
+            file="$(find gazelle_sim)/robot/basic_differential_circ.yaml" />
+
+
+  <!-- Gazelle Sim -->
+  <include file="$(find gazelle_sim)/launch/gazelle_sim.launch">
+    <arg name="show_rviz" value="false" />
+    <arg name="show_steering" default="false" />
+    <arg name="show_image_view" default="true" />
+    <arg name="show_dynamic_reconfigure" default="true" />
+  </include>
+   <!-- Launch line following node -->
+   #  <node pkg="l2_bot" type="line_follow.py" name="line_follow_node" output="screen" />
+   <!-- USB Cam -->
+   <include file="$(find usb_cam)/launch/usb_cam.launch"/>
+
+</launch>
