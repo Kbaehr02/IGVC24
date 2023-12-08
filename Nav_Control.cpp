@@ -6,11 +6,11 @@
 #include <ros.h>
 #include <geometry_msgs/Twist.h>
 #include <std_msgs/Float64.h>
-
+#include <std_msgs/Float32.h>
 ros::NodeHandle  nh;
 geometry_msgs::Twist msg1;
 std_msgs::Float64 msg2;
-
+std_msgs::Float32 msg3;
 //=====================================================
 // Dimensions of differential bot and conversion equations
 const float trackWidth = .35; // Distance between wheels in meters
@@ -44,20 +44,31 @@ void cmd_velMsg( const geometry_msgs::Twist& msg1){
   speed = msg1.linear.x;  // Speed of bot sent from ROS (magnitude)
   rpmLeft = int((60*(speed-(trackWidth*steer)))/(2*3.14*wheelRadius)); 
   rpmRight = int((60*(speed+(trackWidth*steer)))/(2*3.14*wheelRadius));
-  /*analogWrite(ENA, rpmLeft*rpm2analog);
+  //rpmLeft = (2*speed-steer*trackWidth)/(2*wheelRadius);
+  //rpmRight = (2*speed+steer*trackWidth)/(2*wheelRadius);
+  if (rpmLeft >= maxRPM){
+    rpmLeft= maxRPM;
+    rpmRight = maxRPM/5;
+  }
+  if (rpmRight >= maxRPM){
+    rpmRight= maxRPM;
+    rpmLeft = maxRPM/5;
+  }
+  analogWrite(ENA, rpmLeft*rpm2analog);
   analogWrite(ENB, rpmRight*rpm2analog);
   //Set direction of motors forward
   digitalWrite(motor1pin1, LOW);
   digitalWrite(motor1pin2, HIGH);
-  digitalWrite(motor2pin1, HIGH);
-  digitalWrite(motor2pin2, LOW);*/
+  digitalWrite(motor2pin1, LOW);
+  digitalWrite(motor2pin2, HIGH);
 }
 void pythonCommsMsg( const std_msgs::Float64& msg2){
   rpm2analog = msg2.data;
-  Serial.println(rpm2analog);
 }
 ros::Subscriber<geometry_msgs::Twist> sub1("/cmd_vel", cmd_velMsg );
-ros::Subscriber<std_msgs::Float64> sub2("comms/arduino", pythonCommsMsg );
+ros::Subscriber<std_msgs::Float64> sub2("comms/python", pythonCommsMsg );
+//ros::Publisher sendData("comms/arduino", &msg3);
+ros::Publisher sendData("/comms/arduino", &msg3);
 //=====================================================
 // Setup and looped function
 void setup()
@@ -72,18 +83,20 @@ void setup()
   nh.initNode(); // Establish node to communicate via ROS
   nh.subscribe(sub1); // Register subscriber "sub" defined after message callback function
   nh.subscribe(sub2);
-  Serial.begin(9600);
+  nh.advertise(sendData);
+  Serial.begin(57600);
 }
 
 void loop()
 {
-  //Serial.println(rpm2analog);
-  analogWrite(ENA, 255);
+  msg3.data = rpm2analog*rpmRight;
+  sendData.publish(&msg3);
+  /*analogWrite(ENA, 255);
   analogWrite(ENB, 255);
   //Set direction of motors forward
   digitalWrite(motor1pin1, LOW);
   digitalWrite(motor1pin2, HIGH);
-  digitalWrite(motor2pin1, HIGH);
-  digitalWrite(motor2pin2, LOW);
+  digitalWrite(motor2pin1, LOW);
+  digitalWrite(motor2pin2, HIGH);*/
   nh.spinOnce();
 }
