@@ -19,7 +19,11 @@
   </include>
    <!-- Launch line following node -->
    #  <node pkg="l2_bot" type="line_follow.py" name="line_follow_node" output="screen" />
+<<<<<<< HEAD
    <!-- USB Cam -->
    <include file="$(find usb_cam)/launch/usb_cam.launch"/>
 
+=======
+   
+>>>>>>> 1030b7c9969860025b533d0a6e6d8503ac73da37
 </launch>
