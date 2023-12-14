@@ -38,7 +38,7 @@ float rpm_right; // RPM of right motor
 //=========================================================
 // Callback function in the event a ROS message is received
 //=========================================================
-void cmd_velMsg( const geometry_msgs::Twist& msg_1){
+void cmdVelMsg( const geometry_msgs::Twist& msg_1){
   // Store ROS twist message and calculate RPM
   steer = msg_1.angular.z;
   speed = msg_1.linear.x;
